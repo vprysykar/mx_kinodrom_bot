@@ -7,8 +7,7 @@ namespace kinodrom_bot
 {
     public class database
     {
-        string cs = "";// "Data Source=SQL01AO\\ROV06VCDB02;Initial Catalog=VISTA;Integrated Security=false;User ID=VistaApp; Password=pu3HNrAxZSjeKXYA";
-
+        string cs = "";
         public database(string _cs)
         {
             cs = _cs;
