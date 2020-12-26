@@ -1,41 +1,4 @@
-﻿//using System;
-
-//namespace kinodrom_bot
-//{
-//    class Program
-//    {
-//        static void Main(string[] args)
-//        {
-//            Console.WriteLine("Hello World!");
-
-//            var sessions = new database().GetSessions();
-//            foreach(var kvp in sessions)
-//            {
-//                Console.WriteLine($"{kvp.Key} {kvp.Value}");
-//                var info = new database().GetKinodromOrders(kvp.Value);
-//                info = new database().GetKinodromOrders_seats(info);
-//                foreach(var i in info)
-//                {
-//                    Console.WriteLine($"{i.TransactionNumber}-{i.BookingNumber}-{i.Email}");
-//                    foreach(var items in i.items)
-//                    {
-//                        Console.WriteLine($"\t\t{items.name} x{items.qty}");
-//                    }
-//                    foreach (var t in i.tickets)
-//                    {
-//                        Console.WriteLine($"\t\tряд:{t.RowId}  місце:{t.SeatId}");
-//                    }
-//                }
-//            }
-//            Console.ReadKey();
-
-//        }
-//    }
-//}
-
-
-
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
 using System;
 using System.Collections.Generic;
@@ -49,6 +12,9 @@ using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.InlineQueryResults;
 using Telegram.Bot.Types.InputFiles;
 using Telegram.Bot.Types.ReplyMarkups;
+using kinodrom_bot.Service;
+using System.Text;
+using System.Security.Cryptography.X509Certificates;
 
 namespace kinodrom_bot
 {
@@ -56,6 +22,8 @@ namespace kinodrom_bot
     {
         private static TelegramBotClient Bot;
         private static database db;
+        private static string server_url_for_statistic = "";
+        public static X509Certificate2 cback_cert;
 
         static async Task Main()
         {
@@ -67,7 +35,13 @@ namespace kinodrom_bot
 
             db = new database(Configuration.GetSection("db_connectionstring").Value);
             string BotToken = Configuration.GetSection("bot_token").Value;
-
+            server_url_for_statistic = Configuration.GetSection("statistic_url").Value;
+            Console.WriteLine("Statistic server url: " + server_url_for_statistic);
+            cback_cert = CertificateUtility.GetHttpsCertificateFromStore();
+            if (cback_cert == null)
+            {
+                Console.WriteLine("FAILED TO LOAD SSL CERTIFICATE FROM STORE");
+            }
             Bot = new TelegramBotClient(BotToken);
             //#if USE_PROXY
             //            var Proxy = new WebProxy(Configuration.Proxy.Host, Configuration.Proxy.Port) { UseDefaultCredentials = true };
@@ -115,7 +89,13 @@ namespace kinodrom_bot
                 case "/sessions":
                 case "/sessions@DevService_bot":
                     await SendSessionsList(message);
-                    break;              
+                    break;
+
+                case "/newyearstats":
+                case "/newyearstats@DevService_bot":
+                    //await SalesList(message);
+                    await NewYearDaysButtons(message);
+                    break;
                 //// Send inline keyboard
                 //case "/inline":
                 //    await SendInlineKeyboard(message);
@@ -180,6 +160,36 @@ namespace kinodrom_bot
                     replyMarkup: inlineKeyboard
                 );
             }
+            async Task NewYearDaysButtons(Message msg)
+            {
+                string[] days = { "24.12", "25.12", "26.12", "27.12", "28.12", "29.12", "29.12", "30.12", "31.12" };
+
+                var rows = new List<List<InlineKeyboardButton>>();
+                for (int i = 0; i < days.Length;)
+                {
+                    List<InlineKeyboardButton> button = new List<InlineKeyboardButton>();
+                    button.Add(InlineKeyboardButton.WithCallbackData($"{days[i]}", $"days-{days[i]}"));
+                    i += 1;
+                    button.Add(InlineKeyboardButton.WithCallbackData($"{days[i]}", $"days-{days[i]}"));
+                    i += 1;
+                    button.Add(InlineKeyboardButton.WithCallbackData($"{days[i]}", $"days-{days[i]}"));
+                    i += 1;
+                    rows.Add(button);
+                }
+
+                List<InlineKeyboardButton> buttonTotal = new List<InlineKeyboardButton>();
+                buttonTotal.Add(InlineKeyboardButton.WithCallbackData($"Total", $"days-total"));
+                rows.Add(buttonTotal);
+
+                var inlineKeyboard = new InlineKeyboardMarkup(rows.ToArray().ToArray());
+
+                await Bot.SendTextMessageAsync(
+                    chatId: message.Chat.Id,
+                    text: "Оберіть дату:",
+                    replyMarkup: inlineKeyboard
+                );
+            }
+
 
             // Send inline keyboard
             // You can process responses in BotOnCallbackQueryReceived handler
@@ -276,13 +286,50 @@ namespace kinodrom_bot
             async Task mxUsage(Message msg)
             {
                 const string usage = "Usage:\n" +
-                                        "/sessions - show todays sessions list";
+                                        "/sessions - show todays sessions list\n" +
+                                        "/newyearstats - show customer sales for party";
                 await Bot.SendTextMessageAsync(
                     chatId: msg.Chat.Id,
                     text: usage,
                     replyMarkup: new ReplyKeyboardRemove()
                 );
             }
+        }
+
+        private static async Task SalesList(Message msg)
+        {
+
+            NewYearStatisticService instance = new NewYearStatisticService(server_url_for_statistic);
+            var data = instance.Customers();
+            if (data.Count == 0)
+            {
+                await Bot.SendTextMessageAsync(
+                   chatId: msg.Chat.Id,
+                   text: "Інформація відсутня"
+               );
+                return;
+            }
+            if (data.Count == 1 && data[0].error.Length > 0)
+            {
+                await Bot.SendTextMessageAsync(
+                   chatId: msg.Chat.Id,
+                   text: "Помилка виконання запиту:\n" + data[0].error
+               );
+                return;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.Append($"<b>Гостей усього: {data.Count}</b>\n");
+            foreach (var row in data)
+            {
+                sb.Append($"Телефон клієнта {row.phone}\nEmail клієнта {row.Email}  {row.Qty}шт");
+            }
+            sb.ToString();
+
+            await Bot.SendTextMessageAsync(
+                  chatId: msg.Chat.Id,
+                  text: sb.ToString()
+              );
         }
 
         // Process Inline Keyboard callback data
@@ -331,6 +378,83 @@ namespace kinodrom_bot
                         text: "Замовлення відсутні"
                     );
                 }
+                return;
+            }
+
+            if (callbackQuery.Data.Contains("days-"))
+            {
+                var incoming_msg = callbackQuery.Data;
+                var dayValue = callbackQuery.Data.Substring(incoming_msg.IndexOf('-') + 1);
+                Console.WriteLine("Statistic server url: " + server_url_for_statistic);
+                List<NewYearStatisticModel> data = new List<NewYearStatisticModel>();
+                try
+                {
+                    NewYearStatisticService instance = new NewYearStatisticService(server_url_for_statistic);
+                    try
+                    {
+                        data = instance.Customers(cback_cert);
+                    }
+                    catch(Exception ex)
+                    {
+                        Console.WriteLine("Ошибка выполнения GET запроса:\n"+ ex.StackTrace);
+                    }
+                    if (data == null)
+                        throw new Exception("reporting service null result");
+                }
+                catch(Exception ex)
+                {
+                    Console.WriteLine(ex.ToString());
+                      await Bot.SendTextMessageAsync(
+                       chatId: callbackQuery.Message.Chat.Id,
+                       text: "Ошибка: "+ex.Message
+                   );
+                    return;
+                }
+               
+                if (data.Count == 0)
+                {
+                    await Bot.AnswerCallbackQueryAsync(
+                       callbackQueryId: callbackQuery.Id,
+                       text: "Інформація відсутня"
+                    );
+                    return;
+                }
+                if (data.Count == 1 && data[0].error.Length > 0)
+                {
+                    await Bot.AnswerCallbackQueryAsync(
+                       callbackQueryId: callbackQuery.Id,
+                       text: "Помилка виконання запиту:\n" + data[0].error
+                   );
+                    return;
+                }
+                //FILTER VALUE
+                var filtered = data;
+                StringBuilder sb = new StringBuilder();
+                sb.Append($"Транзакцій загалом: {data.Count}\n");
+                if (dayValue != "total")
+                {
+                    var dt = DateTime.Parse(dayValue + ".2020");                    
+                    filtered = data.Where(x => x.Time.Date == dt.Date).ToList();
+                    if (filtered.Count == 0)
+                    {
+                        sb.Append($"{dt.ToString("dd.MM")} продажі відсутні");
+                    }
+                    else
+                    {
+                        sb.Append($"Придбано за {dt.ToString("dd.MM")}:\n");                      
+                    }
+                }
+                
+                foreach (var row in filtered)
+                {
+                    sb.Append($"\nТелефон клієнта {row.phone}\nEmail клієнта {row.Email}  {row.Qty}шт\n");
+                }
+                string message = sb.ToString();
+                
+                await Bot.SendTextMessageAsync(
+                   chatId: callbackQuery.Message.Chat.Id,
+                   text: message
+               );
                 return;
             }
 
@@ -424,6 +548,30 @@ namespace kinodrom_bot
                 ResultMessage += dat_message;
             }
             return ResultMessage;
+        }
+    }
+
+
+    public static class CertificateUtility
+    {
+        public static X509Certificate2 GetHttpsCertificateFromStore()
+        {
+            using (var store = new X509Store(StoreName.My, StoreLocation.LocalMachine))
+            {
+                store.Open(OpenFlags.ReadOnly);
+                var certCollection = store.Certificates;
+                var currentCerts = certCollection.Find(X509FindType.FindBySubjectName, "cback-prod.mx.local", false);
+
+                if (currentCerts.Count == 0)
+                {
+                    throw new Exception("Https certificate is not found.");
+                }
+                foreach (var cc in currentCerts)
+                {
+                    Console.WriteLine(cc.FriendlyName + "  " + cc.PrivateKey);
+                }
+                return currentCerts[0];
+            }
         }
     }
 }

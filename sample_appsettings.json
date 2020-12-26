@@ -1,4 +1,5 @@
 {
   "bot_token": "",
-  "db_connectionstring": "Data Source=SQL01AO\\ROV06VCDB02;Initial Catalog=;Integrated Security=false;User ID=; Password="
+  "db_connectionstring": "Data Source=SQL01AO\\ROV06VCDB02;Initial Catalog=;Integrated Security=false;User ID=; Password=",
+  "statistic_url" : ""
 }
